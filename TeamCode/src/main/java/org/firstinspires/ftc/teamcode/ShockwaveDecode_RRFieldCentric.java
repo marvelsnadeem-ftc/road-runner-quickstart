@@ -50,9 +50,9 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
     private static final double TARGET_FLYWHEEL_RPM = 2800.0;
 
     // PIDF for velocity control
-    private static final double shooterP = 5.0;
-    private static final double shooterI = 0.0;
-    private static final double shooterD = 0.0;
+    private static final double shooterP = 7.0;
+    private static final double shooterI = 3.0;
+    private static final double shooterD = 1.5;
     private static final double shooterF = 32767.0 / MAX_TICKS_PER_SEC_MEASURED;
 
     // Field-centric: driver heading offset (re-zero)

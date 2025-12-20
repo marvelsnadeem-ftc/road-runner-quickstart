@@ -13,10 +13,10 @@ public class Shooter {
     private DcMotorEx shooterR;
 
     // NOTE: This is now treated as TARGET RPM (not ticks/sec).
-    private static final double BANG_BANG_TARGET_VELOCITY = 3000.0; // RPM target you requested
+    private static final double BANG_BANG_TARGET_VELOCITY = 2800; // RPM target you requested
 
     // Kept to minimize changes; no longer used in PIDF velocity mode
-    private static final double FLYWHEEL_FULL_POWER       = -0.58;
+    //private static final double FLYWHEEL_FULL_POWER       = -0.58;
 
     // -----------------------------
     // REQUIRED for velocity PIDF
@@ -31,9 +31,9 @@ public class Shooter {
     private static final double shooterF = 32767.0 / MAX_TICKS_PER_SEC_MEASURED; // 13.653
 
     // Start values (tune P upward for faster recovery; keep I=0 initially)
-    private static final double shooterP = 5.0;
-    private static final double shooterI = 0.0;
-    private static final double shooterD = 0.0;
+    private static final double shooterP = 7.0;
+    private static final double shooterI = 3.0;
+    private static final double shooterD = 1.5;
 
     public Shooter(HardwareMap hardwareMap) {
         shooterR = hardwareMap.get(DcMotorEx.class, "shooterR");
