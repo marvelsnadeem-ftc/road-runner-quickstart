@@ -94,7 +94,7 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         Pose2d startPose = new Pose2d(0, 0, 0);
 
 // Shooter-on-back shooting pose you already use (front heading = 225°)
-        Pose2d shootPose = new Pose2d(54, 8, Math.toRadians(225));
+        Pose2d shootPose = new Pose2d(54, 8, Math.toRadians(228));
 
 //// Your known alignment/staging pose before entering the intake lane
 //        Pose2d stagePose = new Pose2d(45, 0, Math.toRadians(225));
@@ -142,7 +142,7 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         Pose2d afterPart1 = drive.localizer.getPose();
 
 // choose +90 or -90 after you do the sign test
-        double turnToFaceA = Math.toRadians(-145);
+        double turnToFaceA = Math.toRadians(-140);
 
         Action moveToA3 = drive.actionBuilder(afterPart1)
                 .turn(turnToFaceA)
@@ -163,16 +163,16 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
                 .build();
         Actions.runBlocking(withPoseTelemetry(returnToShootPose, drive));
 
-//        Action part2Shoot = new SequentialAction(
-//                spinAndShoot,
-//                intakeShootComboReverse1,
-//                intakeShootComboBall1,
-//                intakeShootComboReverse2,
-//                intakeShootComboBall2,
-//                intakeShootComboReverse3,
-//                intakeShootComboBall3
-//        );
-//        Actions.runBlocking(withPoseTelemetry(part2Shoot, drive));
+        Action part2Shoot = new SequentialAction(
+                spinAndShoot,
+                intakeShootComboReverse1,
+                intakeShootComboBall1,
+                intakeShootComboReverse2,
+                intakeShootComboBall2,
+                intakeShootComboReverse3,
+                intakeShootComboBall3
+        );
+        Actions.runBlocking(withPoseTelemetry(part2Shoot, drive));
 
 
 //// ===== PART 2 (optimized motion + intake parallel) =====

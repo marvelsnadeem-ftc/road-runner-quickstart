@@ -10,17 +10,7 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-/**
- * Shockwave TeleOp using Road Runner v1.0 field-centric drive powered by PinpointLocalizer.
- *
- * FIXES:
- *  - Right stick X is already fixed: stick right -> turn right (clockwise)
- *  - Strafe fix: use Road Runner convention +Y = LEFT end-to-end (no extra right/left flip at the end).
- *    This corrects "stick right strafes left" symptoms.
- *
- * NO Control Hub IMU references. Heading comes from Pinpoint via RR Localizer.
- */
-@TeleOp(name = "ShockwaveDecode_RRFieldCentric")
+@TeleOp(name = "DECODE SEASON")
 public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
 
     private final ElapsedTime runtime = new ElapsedTime();
@@ -36,16 +26,28 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
     private boolean flywheelOn = false;
     private boolean aPrev = false;
 
+    // Y toggles drivetrain slow mode ONLY
+    private boolean slowMode = false;
+    private boolean yPressedLast = false;
+
+    // Trapdoor toggle (moved off Y so Y can be slow-mode)
     private boolean trapdoorOpen = false;
-    private boolean yPrev = false;
+    private boolean rbPrev = false;
 
     // --- CONTROL CONSTANTS ---
     private static final double INTAKE_POWER = 1.0;
 
+    // --- TRAPDOOR POSITIONS (adjust to your robot) ---
+    private static final double TRAPDOOR_CLOSED_POS = 0.0;
+    private static final double TRAPDOOR_OPEN_POS   = 1.0;
+
+    // --- DRIVETRAIN SLOW MODE MULTIPLIER ---
+    private static final double DRIVE_SLOW_MULT = 0.30;
+
     // --- SHOOTER CONSTANTS ---
     private static final double ENCODER_COUNTS_PER_REV = 28.0;
     private static final double MAX_TICKS_PER_SEC_MEASURED = 2400.0;
-    private static final double TARGET_FLYWHEEL_RPM = 3000.0;
+    private static final double TARGET_FLYWHEEL_RPM = 2800.0;
 
     // PIDF for velocity control
     private static final double shooterP = 5.0;
@@ -74,7 +76,8 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
         trapdoor = hardwareMap.get(Servo.class, "trapdoor");
 
         // Start closed
-        trapdoor.setPosition(0.0);
+        trapdoorOpen = false;
+        trapdoor.setPosition(TRAPDOOR_CLOSED_POS);
 
         shooterR.setDirection(DcMotor.Direction.REVERSE);
         intake.setDirection(DcMotor.Direction.FORWARD);
@@ -111,7 +114,6 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
             // Optional: continuity protection if heading ever jumps hard
             double dH = rawHeading - lastRawHeading;
             if (Math.abs(dH) > Math.toRadians(90)) {
-                // keep fieldHeading continuous
                 headingOffset += dH;
             }
             lastRawHeading = rawHeading;
@@ -126,20 +128,36 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
             double fieldHeading = rawHeading - headingOffset;
 
             // ----------------
+            // Y TOGGLE: SLOW MODE (DRIVETRAIN ONLY)
+            // ----------------
+            boolean yNow = gamepad1.y;
+            if (yNow && !yPressedLast) {
+                slowMode = !slowMode;
+            }
+            yPressedLast = yNow;
+
+            double driveMult = slowMode ? DRIVE_SLOW_MULT : 1.0;
+
+            // ----------------
             // FIELD-CENTRIC DRIVE (RR convention: +X forward, +Y LEFT)
             // ----------------
             double forward = -gamepad1.left_stick_y;     // + forward
-            double strafeRight = gamepad1.left_stick_x;  // + right
-            double turn = -gamepad1.right_stick_x;       // stick right -> turn right (clockwise)
+            double strafe  =  gamepad1.left_stick_x;     // + right (driver)
+            double turn    = -gamepad1.right_stick_x;    // stick right -> turn right (clockwise)
 
-            // Deadzones
+            // Deadzones (apply before scaling)
             if (Math.abs(forward) < 0.1) forward = 0;
-            if (Math.abs(strafeRight) < 0.1) strafeRight = 0;
-            if (Math.abs(turn) < 0.1) turn = 0;
+            if (Math.abs(strafe)  < 0.1) strafe  = 0;
+            if (Math.abs(turn)    < 0.1) turn    = 0;
+
+            // Apply slow mode to drivetrain ONLY
+            forward *= driveMult;
+            strafe  *= driveMult;
+            turn    *= driveMult;
 
             // Convert driver strafe (right+) into RR +Y LEFT
-            double fieldX = forward;              // +X forward
-            double fieldYLeft = -strafeRight;     // +Y left (so stick right => negative)
+            double fieldX = forward;      // +X forward
+            double fieldYLeft = -strafe;  // +Y left (stick right => negative)
 
             // Rotate field -> robot by -fieldHeading
             double cos = Math.cos(-fieldHeading);
@@ -148,8 +166,7 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
             double robotX = fieldX * cos - fieldYLeft * sin;      // forward
             double robotYLeft = fieldX * sin + fieldYLeft * cos;  // left
 
-            // IMPORTANT FIX:
-            // Pass robotYLeft directly into RR vector (do NOT flip to "right").
+            // Pass robotYLeft directly into RR vector (do NOT flip to "right")
             drive.setDrivePowers(new PoseVelocity2d(new Vector2d(robotX, robotYLeft), turn));
 
             // ----------------
@@ -167,15 +184,14 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
             }
 
             // ----------------
-            // TRAPDOOR TOGGLE (Y)
+            // TRAPDOOR TOGGLE (RIGHT BUMPER)
             // ----------------
-            boolean yPressed = gamepad1.y || gamepad2.y;
-            if (yPressed && !yPrev) {
+            boolean rbNow = gamepad1.right_bumper || gamepad2.right_bumper;
+            if (rbNow && !rbPrev) {
                 trapdoorOpen = !trapdoorOpen;
+                trapdoor.setPosition(trapdoorOpen ? TRAPDOOR_OPEN_POS : TRAPDOOR_CLOSED_POS);
             }
-            yPrev = yPressed;
-
-            trapdoor.setPosition(trapdoorOpen ? 1.0 : 0.0);
+            rbPrev = rbNow;
 
             // ----------------
             // FLYWHEEL TOGGLE (A) + Velocity control
@@ -200,10 +216,11 @@ public class ShockwaveDecode_RRFieldCentric extends LinearOpMode {
             double actualRPM = (actualTicksPerSec / ENCODER_COUNTS_PER_REV) * 60.0;
 
             telemetry.addData("Run Time", runtime.toString());
+            telemetry.addData("Slow Mode (Y)", slowMode ? "ON (30%)" : "OFF (100%)");
             telemetry.addData("Heading raw (deg)", Math.toDegrees(rawHeading));
             telemetry.addData("Heading field (deg)", Math.toDegrees(fieldHeading));
             telemetry.addData("Stick f/s/t", "%.2f %.2f %.2f",
-                    forward, strafeRight, gamepad1.right_stick_x);
+                    forward, strafe, -gamepad1.right_stick_x);
             telemetry.addData("Flywheel", flywheelOn ? "ON" : "OFF");
             telemetry.addData("Target RPM", TARGET_FLYWHEEL_RPM);
             telemetry.addData("Actual RPM", "%.1f", actualRPM);
