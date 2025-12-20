@@ -29,7 +29,7 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
 
         waitForStart();
         if (isStopRequested()) return;
-        Pose2d initialPose = FieldCoordinates.BLUE_START_C1;
+        //Pose2d initialPose = FieldCoordinates.BLUE_START_C1;
         // --------------------------------------------------------------------
         //        // SIMPLE SHOOT ACTION:
         //        //
