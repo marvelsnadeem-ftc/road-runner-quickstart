@@ -20,6 +20,9 @@ public class Intake {
         intake.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
 
+    public void setPower(double power) {
+        intake.setPower(power);
+    }
     /**
      * Run intake forward for a given number of seconds
      * (used here only to feed preloaded artifacts into the shooter).

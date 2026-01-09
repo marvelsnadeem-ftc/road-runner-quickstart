@@ -4,7 +4,6 @@ import androidx.annotation.NonNull;
 
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.acmerobotics.roadrunner.Action;
-import com.acmerobotics.roadrunner.ParallelAction;
 import com.acmerobotics.roadrunner.Pose2d;
 import com.acmerobotics.roadrunner.SequentialAction;
 import com.acmerobotics.roadrunner.Vector2d;
@@ -16,10 +15,13 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.teamcode.autos.FieldCoordinates;
 import org.firstinspires.ftc.teamcode.autos.TileMoveHelper;
 
-@Autonomous(name = "Shockwave Auton Blue Near", group = "Auto")
-public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
+@Autonomous(name = "Shockwave Auton Far Blue", group = "Auto")
+public class SWAutonBlueFar extends LinearOpMode {
 
     private final ElapsedTime runtime = new ElapsedTime();
+    // === TIMING CONSTANTS (tune these on field) ===
+    private static final double INTAKE_FORWARD_SEC  = 1.0;   // was 2.0
+    private static final double INTAKE_REVERSE_SEC  = 0.20;  // was 0.2
 
     @Override
     public void runOpMode() throws InterruptedException {
@@ -54,34 +56,11 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         if (isStopRequested()) return;
         runtime.reset();
 
-        // Build intake-only actions
-        Action intakeBall1 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall2 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall3 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeReverse1 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse2 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse3 = intake.intakeForwardForTime(0.2, -1.0);
-
-        Action intakeBall4 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall5 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall6 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeReverse4 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse5 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse6 = intake.intakeForwardForTime(0.2, -1.0);
-
-        Action intakeBall7 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall8 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall9 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeReverse7 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse8 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse9 = intake.intakeForwardForTime(0.2, -1.0);
-
-        Action intakeBall10 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall11 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeBall12 = intake.intakeForwardForTime(2.0, 1.0);
-        Action intakeReverse10 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse11 = intake.intakeForwardForTime(0.2, -1.0);
-        Action intakeReverse12 = intake.intakeForwardForTime(0.2, -1.0);
+        // Build bursts as needed (fresh action each time)
+        Action burstPreload = buildIntakeBurst(intake, 3);
+        Action burstA3      = buildIntakeBurst(intake, 3);
+        Action burstA2      = buildIntakeBurst(intake, 3);
+        Action burstA1      = buildIntakeBurst(intake, 3);
 
         // PART 1 Go and Shoot
         Pose2d startPose = drive.localizer.getPose(); // flywheel facing C6 (up)
@@ -98,14 +77,9 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         // Moving => trapdoor must be closed
         Actions.runBlocking(withPoseTelemetry(moveRows3TurnAndShootPose, drive, shooter, false));
 
-        // ShootingPose => trapdoor allowed to open if RPM is in range
-        Actions.runBlocking(withPoseTelemetry(new SequentialAction(
-                        intakeReverse1,
-                        intakeBall1,
-                        intakeReverse2,
-                        intakeBall2,
-                        intakeReverse3,
-                        intakeBall3),
+        // Preload shoot (was intakeReverse1/2/3 + intakeBall1/2/3)
+        Actions.runBlocking(withPoseTelemetry(
+                burstPreload,
                 drive, shooter, true
         ));
 
@@ -139,29 +113,19 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
                 .strafeTo(new Vector2d(forwardX, forwardY))
                 .build();
 
-        Action part2MoveIntakeParallel = new ParallelAction(
-                strafetoA3,
-                intake.intakeForwardForTime(2.0, 1.0)
-        );
-
+        Action part2DriveWithIntake = driveWithIntake(strafetoA3, intake, 1.0);
         // Moving => trapdoor closed
-        Actions.runBlocking(withPoseTelemetry(part2MoveIntakeParallel, drive, shooter, false));
+        Actions.runBlocking(withPoseTelemetry(part2DriveWithIntake, drive, shooter, false));
 
         // Back to shootingPose, then shoot sequence (trapdoor allowed only during shooting sequence)
-        Pose2d poseAfterStep2 = drive.localizer.getPose();
-        Action poseBackToShootingPose2 = ShootingPose(shootingPoseNear, drive, poseAfterStep2);
+        Pose2d poseAtA3 = drive.localizer.getPose();
+        Action poseBackToShootingPoseFromA2 = ShootingPose(shootingPoseNear, drive, poseAtA3);
 
-        Actions.runBlocking(withPoseTelemetry(poseBackToShootingPose2, drive, shooter, false));
+        Actions.runBlocking(withPoseTelemetry(poseBackToShootingPoseFromA2, drive, shooter, false));
 
+        // A3 shoot
         Actions.runBlocking(withPoseTelemetry(
-                new SequentialAction(
-                        intakeReverse4,
-                        intakeBall4,
-                        intakeReverse5,
-                        intakeBall5,
-                        intakeReverse6,
-                        intakeBall6
-                ),
+                burstA3,
                 drive, shooter, true
         ));
 
@@ -197,106 +161,110 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         );
 
         Action splineToA2 = drive.actionBuilder(poseAtC3)
-                .splineToLinearHeading(a2IntakePose, travelTangent_A2)
+                .splineToLinearHeading(
+                        a2IntakePose,
+                        travelTangent_A2
+                )
                 .build();
 
-        Action part3MoveIntakeParallel = new ParallelAction(
-                splineToA2,
-                intake.intakeForwardForTime(4.0, 1.0)
-        );
+        // Intake runs only while splineToA2 is executing
+        Action part3DriveWithIntake = driveWithIntake(splineToA2, intake, 1.0);
+        Actions.runBlocking(withPoseTelemetry(part3DriveWithIntake, drive, shooter, false));
 
-        Actions.runBlocking(withPoseTelemetry(part3MoveIntakeParallel, drive, shooter, false));
 
         Pose2d AfterA2 = drive.localizer.getPose();
         Action poseBackToShootingPoseA2 = ShootingPose(shootingPoseNear, drive, AfterA2);
 
         Actions.runBlocking(withPoseTelemetry(poseBackToShootingPoseA2, drive, shooter, false));
 
+
+        // A2 shoot
         Actions.runBlocking(withPoseTelemetry(
-                new SequentialAction(
-                        intakeReverse7,
-                        intakeBall7,
-                        intakeReverse8,
-                        intakeBall8,
-                        intakeReverse9,
-                        intakeBall9
-                ),
+                burstA2,
                 drive, shooter, true
         ));
 
-        // PART 4: pickup A1, return, shoot
-        Action turnMinus45FromShoot2 = drive.actionBuilder(drive.localizer.getPose())
-                .turn(Math.toRadians(-45))
-                .build();
-        Actions.runBlocking(withPoseTelemetry(turnMinus45FromShoot2, drive, shooter, false));
 
-        poseAfterTurn = drive.localizer.getPose();
+        // ===== PART 4: pickup A1, return, shoot =====
 
-        double rowsDown = -1.0;
+// Read the starting pose for Part 4 (C4 shooting pose)
+        Pose2d part4Start = drive.localizer.getPose();
+
+// Row/column semantics (you already tuned these)
+        double rowsDown    = -1.0;    // C4 -> C3/C2-style drop
+        double deltaRowsToA1 = -0.8;  // extra down toward A1
+        double deltaLeftToA1 =  1.2;  // left toward A1
+
+// 1) Compute C2 row target in world coords from the Part4 start pose
         double deltaFieldForwardDown = rowsDown * tile;
+        double deltaRobotXDown       = TileMoveHelper.X_SIGN * deltaFieldForwardDown;
 
-        double deltaRobotXDown = TileMoveHelper.X_SIGN * deltaFieldForwardDown;
-        double targetX_C3 = poseAfterTurn.position.x + deltaRobotXDown;
+        double c2X = part4Start.position.x + deltaRobotXDown;
+        double c2Y = part4Start.position.y; // same lateral lane
 
-        Action moveToC3 = drive.actionBuilder(poseAfterTurn)
-                .lineToX(targetX_C3)
-                .build();
+// 2) Compute A1 intake target from that C2 position
+        double deltaX_A1 = TileMoveHelper.X_SIGN * (deltaRowsToA1 * tile);
+        double deltaY_A1 = TileMoveHelper.Y_SIGN * (deltaLeftToA1 * tile);
 
-        Actions.runBlocking(withPoseTelemetry(moveToC3, drive, shooter, false));
+        double a1X = c2X + deltaX_A1;
+        double a1Y = c2Y + deltaY_A1;
 
-        Pose2d poseAtC2 = drive.localizer.getPose();
-
-        double deltaRowsToA1   = -0.8 * tile;
-        double deltaLeftToA1   =  1.2 * tile;
-
-        double deltaX_A1 = TileMoveHelper.X_SIGN * deltaRowsToA1;
-        double deltaY_A1 = TileMoveHelper.Y_SIGN * deltaLeftToA1;
-
-        double targetX_A1 = poseAtC2.position.x + deltaX_A1;
-        double targetY_A1 = poseAtC2.position.y + deltaY_A1;
-
+// 3) Direction of travel from C2 -> A1
         double travelTangent_A1 = Math.atan2(
-                targetY_A1 - poseAtC2.position.y,
-                targetX_A1 - poseAtC2.position.x
+                a1Y - c2Y,
+                a1X - c2X
         );
 
-        double headingOffset_A1 = Math.toRadians(-35);
+// 4) Final heading at A1 (intake orientation tweak)
+        double headingOffset_A1 = Math.toRadians(-35);  // your tuned value
         double finalHeading_A1  = travelTangent_A1 + headingOffset_A1;
 
         Pose2d a1IntakePose = new Pose2d(
-                targetX_A1,
-                targetY_A1,
+                a1X,
+                a1Y,
                 finalHeading_A1
         );
 
-        Action splineToA1 = drive.actionBuilder(poseAtC3)
-                .splineToLinearHeading(a1IntakePose, travelTangent_A1)
+// 5) Build ONE smooth trajectory: turn -> move down 1 row -> spline to A1
+        Action part4Path = drive.actionBuilder(part4Start)
+                .turn(Math.toRadians(-45))      // STEP 1: turn from shooting pose
+                .lineToX(c2X)                   // STEP 2: drop one row to C2 lane
+                .splineToLinearHeading(         // STEP 3: curve into A1 intake pose
+                        a1IntakePose,
+                        travelTangent_A1
+                )
                 .build();
 
-        Action part4MoveIntakeParallel = new ParallelAction(
-                splineToA1,
-                intake.intakeForwardForTime(5.0, 1.0)
-        );
+// Intake runs only while this whole A1 path executes
+        Action part4DriveWithIntake = driveWithIntake(part4Path, intake, 1.0);
 
-        Actions.runBlocking(withPoseTelemetry(part4MoveIntakeParallel, drive, shooter, false));
+// Single runBlocking for all A1 movement
+        Actions.runBlocking(withPoseTelemetry(part4DriveWithIntake, drive, shooter, false));
 
+        //Shooting Logic for A1
         Pose2d poseAfterA1 = drive.localizer.getPose();
         Action poseBackToShootingPoseA1 = ShootingPose(shootingPoseNear, drive, poseAfterA1);
 
         Actions.runBlocking(withPoseTelemetry(poseBackToShootingPoseA1, drive, shooter, false));
-
+        // A1 shoot
         Actions.runBlocking(withPoseTelemetry(
-                new SequentialAction(
-                        intakeReverse10,
-                        intakeBall10,
-                        intakeReverse11,
-                        intakeBall11,
-                        intakeReverse12,
-                        intakeBall12
-                ),
+                burstA1,
                 drive, shooter, true
         ));
+
     }
+
+    private Action buildIntakeBurst(Intake intake, int numBalls) {
+        Action[] steps = new Action[numBalls * 2];
+        for (int i = 0; i < numBalls; i++) {
+            // reverse a bit
+            steps[2 * i]     = intake.intakeForwardForTime(INTAKE_REVERSE_SEC, -1.0);
+            // then feed forward
+            steps[2 * i + 1] = intake.intakeForwardForTime(INTAKE_FORWARD_SEC,  1.0);
+        }
+        return new SequentialAction(steps);
+    }
+
 
     // Generic helper: from any currentPose, build an Action that splines back to shootingPose.
     private Action ShootingPose(Pose2d shootingPose, MecanumDrive drive, Pose2d currentPose) {
@@ -312,6 +280,32 @@ public class ShockwaveRoadrunnerAutonBlue extends LinearOpMode {
         return drive.actionBuilder(currentPose)
                 .splineToLinearHeading(shootingPose, travelTangent)
                 .build();
+    }
+
+    private Action driveWithIntake(Action driveAction, Intake intake, double power) {
+        return new Action() {
+            private boolean started = false;
+
+            @Override
+            public boolean run(@NonNull TelemetryPacket packet) {
+                if (!started) {
+                    // Start intake once, when the action begins
+                    intake.setPower(power);
+                    started = true;
+                }
+
+                // Step the drive action
+                boolean driveStillRunning = driveAction.run(packet);
+
+                if (!driveStillRunning) {
+                    // Drive finished -> stop intake and end this wrapper action
+                    intake.setPower(0.0);
+                }
+
+                // This wrapper lives exactly as long as the drive
+                return driveStillRunning;
+            }
+        };
     }
 
     private Action withPoseTelemetry(Action inner, MecanumDrive drive, Shooter shooter, boolean allowTrapdoor) {
