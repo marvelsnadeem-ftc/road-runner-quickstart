@@ -53,6 +53,10 @@ import java.util.List;
 
 @Config
 public final class MecanumDrive {
+
+    // In MecanumDrive.java (class scope) addedto handle vision
+    private double visionOmega = 0.0;
+
     public static class Params {
         // IMU orientation
         public RevHubOrientationOnRobot.LogoFacingDirection logoFacingDirection =
@@ -249,9 +253,48 @@ public final class MecanumDrive {
         FlightRecorder.write("MECANUM_PARAMS", PARAMS);
     }
 
+//-----------------------------------------------------------------------------------------|
+//----------    Commented out to handle Vision using limelight and new method added below  |
+//-----------------------------------------------------------------------------------------|
+//    public void setDrivePowers(PoseVelocity2d powers) {
+//        MecanumKinematics.WheelVelocities<Time> wheelVels = new MecanumKinematics(1).inverse(
+//                PoseVelocity2dDual.constant(powers, 1));
+//
+//        double maxPowerMag = 1;
+//        for (DualNum<Time> power : wheelVels.all()) {
+//            maxPowerMag = Math.max(maxPowerMag, power.value());
+//        }
+//
+//        leftFront.setPower(wheelVels.leftFront.get(0) / maxPowerMag);
+//        leftBack.setPower(wheelVels.leftBack.get(0) / maxPowerMag);
+//        rightBack.setPower(wheelVels.rightBack.get(0) / maxPowerMag);
+//        rightFront.setPower(wheelVels.rightFront.get(0) / maxPowerMag);
+//    }
+
+//---------------THIS CODE ADDED TO HANDLE VISION BASED TURNING OVERRIDING setDrivePowers method above  ------------------------------
+//---------------THIS CODE IS ONLY USED IN AUTO, IN TELEOP YOU SET visionOmega to 0 and it should work just like th above function -------
+/*
+                What will happen in TeleOp?
+                If you implement:
+                private double visionOmega = 0.0;
+                and you never call setVisionOmega(...) in TeleOp,
+                then TeleOp behavior is unchanged (because powers.angVel + 0.0 == powers.angVel).
+ */
+    /** Additive heading correction (rad/s) blended into all drive commands (teleop + follower). */
+    public void setVisionOmega(double omega) {
+        this.visionOmega = omega;
+    }
+
     public void setDrivePowers(PoseVelocity2d powers) {
+
+        // Blend vision correction into omega (continuous correction while follower runs)
+        PoseVelocity2d blended = new PoseVelocity2d(
+                powers.linearVel,
+                powers.angVel + visionOmega
+        );
+
         MecanumKinematics.WheelVelocities<Time> wheelVels = new MecanumKinematics(1).inverse(
-                PoseVelocity2dDual.constant(powers, 1));
+                PoseVelocity2dDual.constant(blended, 1));
 
         double maxPowerMag = 1;
         for (DualNum<Time> power : wheelVels.all()) {
@@ -263,6 +306,11 @@ public final class MecanumDrive {
         rightBack.setPower(wheelVels.rightBack.get(0) / maxPowerMag);
         rightFront.setPower(wheelVels.rightFront.get(0) / maxPowerMag);
     }
+
+
+    // --------------- END OF VISION CHANGE ------------------------------------------------
+
+
 
     public final class FollowTrajectoryAction implements Action {
         public final TimeTrajectory timeTrajectory;
