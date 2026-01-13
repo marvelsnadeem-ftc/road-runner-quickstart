@@ -61,8 +61,12 @@ public class HelperUtils {
     }
 
     public void setLimelightPipeline(int ll3APipeline){
-        this.limelightSelectedPipeline = ll3APipeline;
+            this.limelightSelectedPipeline = ll3APipeline;
+            if (limelight != null) {
+                limelight.pipelineSwitch(ll3APipeline);
+            }
     }
+
 
     public void setLimelightGains(double kTurn, double txTolDeg, double maxOmega) {
         this.ll_kTurn = kTurn;
