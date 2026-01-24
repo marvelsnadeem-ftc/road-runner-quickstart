@@ -55,7 +55,16 @@ import java.util.List;
 public final class MecanumDrive {
 
     // In MecanumDrive.java (class scope) addedto handle vision
-    private double visionOmega = 0.0;
+    // ---------------- Vision omega safety (clamp + slew + gating) ----------------
+    private double visionOmega = 0.0;      // applied omega after filtering (rad/s)
+    private double visionOmegaCmd = 0.0;   // requested omega from vision code (rad/s)
+    private double lastVisionTs = 0.0;     // timestamp for slew-rate limiting
+
+    // Tunables (make @Config if you want to tune on Dashboard)
+    private static final double VISION_MAX_ASSIST_RAD_PER_S = 0.8;  // clamp
+    private static final double VISION_MAX_SLEW_RAD_PER_S2  = 3.0;  // slew limit
+    private static final double VISION_ENABLE_SPEED_IN_PER_S = 8.0; // gate threshold
+
 
     public static class Params {
         // IMU orientation
@@ -79,23 +88,45 @@ public final class MecanumDrive {
         public double kV = 0.00028709048888375264;//0.0002985508145135344;
         public double kA = 0.000016;//0.0001;
 
+        //Original values that I tweaked during feedback tuner
+//        // path profile parameters (in inches)
+//        public double maxWheelVel = 40;//40; //30 //50;
+//        public double minProfileAccel = -30;
+//        public double maxProfileAccel = 40; //40; //30 //50;
+//
+//        // turn profile parameters (in radians)
+//        public double maxAngVel = Math.PI;//1.1; //Math.PI; // shared with path
+//        public double maxAngAccel = Math.PI; //0.7;//Math.PI;
+//
+//        // path controller gains
+//        public double axialGain = 3.0;//4.0;//6.0;//7.5;//0.0;//forward and backward
+//        public double lateralGain = 3.5;//6.0;//9.5;//0.0;// left and right
+//        public double headingGain = 2.5;//0.8;//1.8; //3.5;//0.0; // shared with turn // basically rotation
+//
+//        public double axialVelGain = 1.0;//0.2;//0.15;//0.2; //0.0;
+//        public double lateralVelGain = 0.0;//1.5;//1.7;//0.0;
+//        public double headingVelGain = 0.0;//1.6;//1.8; //0.0; // shared with turn
+
+
+        //These values are suggested by OpenAI
         // path profile parameters (in inches)
-        public double maxWheelVel = 40;//40; //30 //50;
+        public double maxWheelVel = 50;//50;//48;
         public double minProfileAccel = -30;
-        public double maxProfileAccel = 40; //40; //30 //50;
+        public double maxProfileAccel = 60;//60;//55;
 
         // turn profile parameters (in radians)
-        public double maxAngVel = Math.PI;//1.1; //Math.PI; // shared with path
-        public double maxAngAccel = Math.PI; //0.7;//Math.PI;
+        public double maxAngVel = 2.2; // shared with path
+        public double maxAngAccel = 3.0;
 
         // path controller gains
-        public double axialGain = 3.0;//4.0;//6.0;//7.5;//0.0;//forward and backward
-        public double lateralGain = 3.5;//6.0;//9.5;//0.0;// left and right
-        public double headingGain = 2.5;//0.8;//1.8; //3.5;//0.0; // shared with turn // basically rotation
+        public double axialGain = 3.0;//forward and backward
+        public double lateralGain = 4.5;// left and right
+        public double headingGain = 2.0; // shared with turn // basically rotation
 
-        public double axialVelGain = 1.0;//0.2;//0.15;//0.2; //0.0;
-        public double lateralVelGain = 0.0;//1.5;//1.7;//0.0;
-        public double headingVelGain = 0.0;//1.6;//1.8; //0.0; // shared with turn
+        public double axialVelGain = 0.25;
+        public double lateralVelGain = 1.0;
+        public double headingVelGain = 1.2; // shared with turn
+
     }
 
     public static Params PARAMS = new Params();
@@ -281,9 +312,36 @@ public final class MecanumDrive {
                 then TeleOp behavior is unchanged (because powers.angVel + 0.0 == powers.angVel).
  */
     /** Additive heading correction (rad/s) blended into all drive commands (teleop + follower). */
+
+
     public void setVisionOmega(double omega) {
-        this.visionOmega = omega;
+        double maxAssist = 0.8; // rad/s, start conservative
+        this.visionOmega = Math.max(-maxAssist, Math.min(maxAssist, omega));
     }
+
+//    public void setVisionOmega(double omega) {
+//        this.visionOmega = omega;
+//    }
+
+//    /** Updates the applied visionOmega using clamp + slew-rate limit. Call every loop. */
+//    private void updateVisionOmega() {
+//        double now = Actions.now();
+//        double dt = (lastVisionTs == 0.0) ? 0.02 : (now - lastVisionTs);
+//        lastVisionTs = now;
+//
+//        // Clamp the commanded omega
+//        double cmd = Math.max(-VISION_MAX_ASSIST_RAD_PER_S,
+//                Math.min(VISION_MAX_ASSIST_RAD_PER_S, visionOmegaCmd));
+//
+//        // Slew-rate limit (limit how fast visionOmega can change)
+//        double delta = cmd - visionOmega;
+//        double maxDelta = VISION_MAX_SLEW_RAD_PER_S2 * dt;
+//
+//        if (delta >  maxDelta) delta =  maxDelta;
+//        if (delta < -maxDelta) delta = -maxDelta;
+//
+//        visionOmega += delta;
+//    }
 
     public void setDrivePowers(PoseVelocity2d powers) {
 
@@ -306,6 +364,38 @@ public final class MecanumDrive {
         rightBack.setPower(wheelVels.rightBack.get(0) / maxPowerMag);
         rightFront.setPower(wheelVels.rightFront.get(0) / maxPowerMag);
     }
+
+//    public void setDrivePowers(PoseVelocity2d powers) {
+//
+//        // 1) Update filtered vision omega (clamp + slew)
+//        updateVisionOmega();
+//
+//        // 2) Gate vision assist: only apply it when moving slowly (aim window)
+//        // powers.linearVel is in FIELD units (inches/sec). norm() gives speed magnitude.
+//        double v = powers.linearVel.norm();
+//        double omegaAdd = (v < VISION_ENABLE_SPEED_IN_PER_S) ? visionOmega : 0.0;
+//
+//        // 3) Blend into commanded omega
+//        PoseVelocity2d blended = new PoseVelocity2d(
+//                powers.linearVel,
+//                powers.angVel + omegaAdd
+//        );
+//
+//        // Existing RR conversion (unchanged)
+//        MecanumKinematics.WheelVelocities<Time> wheelVels = new MecanumKinematics(1).inverse(
+//                PoseVelocity2dDual.constant(blended, 1));
+//
+//        double maxPowerMag = 1;
+//        for (DualNum<Time> power : wheelVels.all()) {
+//            maxPowerMag = Math.max(maxPowerMag, power.value());
+//        }
+//
+//        leftFront.setPower(wheelVels.leftFront.get(0) / maxPowerMag);
+//        leftBack.setPower(wheelVels.leftBack.get(0) / maxPowerMag);
+//        rightBack.setPower(wheelVels.rightBack.get(0) / maxPowerMag);
+//        rightFront.setPower(wheelVels.rightFront.get(0) / maxPowerMag);
+//    }
+
 
 
     // --------------- END OF VISION CHANGE ------------------------------------------------

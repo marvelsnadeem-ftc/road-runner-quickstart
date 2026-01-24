@@ -81,11 +81,11 @@ public final class PinpointLocalizer implements Localizer {
         driver.update();
         // Add diagnostic logging
         GoBildaPinpointDriver.DeviceStatus status = driver.getDeviceStatus();
-        System.out.println("Pinpoint Status: " + status);
+        //System.out.println("Pinpoint Status: " + status);
         if (Objects.requireNonNull(driver.getDeviceStatus()) == GoBildaPinpointDriver.DeviceStatus.READY) {
             txPinpointRobot = new Pose2d(driver.getPosX(DistanceUnit.INCH), driver.getPosY(DistanceUnit.INCH), driver.getHeading(UnnormalizedAngleUnit.RADIANS));
             // Add more diagnostics
-            System.out.println("X: " + driver.getPosX(DistanceUnit.INCH) + ", Y: " + driver.getPosY(DistanceUnit.INCH));
+            //System.out.println("X: " + driver.getPosX(DistanceUnit.INCH) + ", Y: " + driver.getPosY(DistanceUnit.INCH));
 
             Vector2d worldVelocity = new Vector2d(driver.getVelX(DistanceUnit.INCH), driver.getVelY(DistanceUnit.INCH));
             Vector2d robotVelocity = Rotation2d.fromDouble(-txPinpointRobot.heading.log()).times(worldVelocity);

@@ -9,13 +9,25 @@ import com.acmerobotics.roadrunner.PoseVelocity2d;
 import com.acmerobotics.roadrunner.SequentialAction;
 import com.acmerobotics.roadrunner.Vector2d;
 import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.MotorControlAlgorithm;
+import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.teamcode.Intake;
 import org.firstinspires.ftc.teamcode.MecanumDrive;
+import org.firstinspires.ftc.teamcode.ShockwaveDecode_RRFieldCentric;
 import org.firstinspires.ftc.teamcode.Shooter;
+
+import java.util.List;
 
 /**
  * Common Autonomous helpers used across multiple auton files.
@@ -56,6 +68,29 @@ public class HelperUtils {
     private double ll_lastOmegaAssist = 0.0;
     private long ll_lastVisionUpdateMs = 0;
 
+
+    // ---- Distance + aim control (auton) ----
+    private double ll_kPDist = 0.02;          // power per cm (tune)
+    private double ll_kPTurn = 0.015;         // rad/s per deg (you already have ll_kTurn; can reuse)
+    private double ll_distDeadbandCm = 3.0;   // cm
+    private double ll_txDeadbandDeg = 1.5;    // deg
+    private double ll_maxFwdPower = 0.35;     // 0..1
+    private double ll_maxTurnOmega = 1.2;     // rad/s (cap)
+    private double ll_camForwardSign = 1.0;   // +1 or -1 depending on your “forward” convention
+
+    // -------------------------------
+    // Auto Align Controls (match TeleOp constants)
+    // -------------------------------
+    private double aa_CAMERA_FORWARD_SIGN = -1.0; // TeleOp: -1 if camera faces -X (flywheel-forward)
+    private double aa_kP_DIST = 0.02;             // TeleOp kP_DIST
+    private double aa_kP_TURN = 0.03;             // TeleOp kP_TURN (units: omega per deg)
+    private double aa_MAX_FWD_POWER  = 0.60;      // TeleOp MAX_FWD_POWER
+    private double aa_MAX_TURN_POWER = 0.45;      // TeleOp MAX_TURN_POWER
+    private double aa_DIST_DEADBAND_CM = 1.5;     // TeleOp DIST_DEADBAND_CM
+    private double aa_TX_DEADBAND_DEG  = 0.6;     // TeleOp TX_DEADBAND_DEG
+
+
+
     public void setLimelight(Limelight3A ll3A){
         this.limelight = ll3A;
     }
@@ -91,15 +126,45 @@ public class HelperUtils {
         return ll_searchOmega;
     }
 
+    public void setAutoAlignGains(double kPDist, double kPTurn,
+                                  double distDeadbandCm, double txDeadbandDeg,
+                                  double maxFwdPower, double maxTurnOmega,
+                                  double camForwardSign) {
+        this.ll_kPDist = kPDist;
+        this.ll_kPTurn = kPTurn;
+        this.ll_distDeadbandCm = distDeadbandCm;
+        this.ll_txDeadbandDeg = txDeadbandDeg;
+        this.ll_maxFwdPower = maxFwdPower;
+        this.ll_maxTurnOmega = maxTurnOmega;
+        this.ll_camForwardSign = camForwardSign;
+    }
+
+    public void setAutoAlignConstants(double cameraForwardSign,
+                                      double kPDist, double kPTurn,
+                                      double maxFwdPower, double maxTurnPower,
+                                      double distDeadbandCm, double txDeadbandDeg) {
+        aa_CAMERA_FORWARD_SIGN = cameraForwardSign;
+        aa_kP_DIST = kPDist;
+        aa_kP_TURN = kPTurn;
+        aa_MAX_FWD_POWER = maxFwdPower;
+        aa_MAX_TURN_POWER = maxTurnPower;
+        aa_DIST_DEADBAND_CM = distDeadbandCm;
+        aa_TX_DEADBAND_DEG = txDeadbandDeg;
+    }
+
+
+
 
 
     // ==== Helpers =====================================
 
     public Action buildIntakeBurst(Intake intake, int numBalls) {
         Action[] steps = new Action[numBalls * 2];
+        //Action[] steps = new Action[numBalls * 1];
         for (int i = 0; i < numBalls; i++) {
             steps[2 * i]     = intake.intakeForwardForTime(intakeReverseSec, -1.0);
             steps[2 * i + 1] = intake.intakeForwardForTime(intakeForwardSec,  1.0);
+            //steps[i] = intake.intakeForwardForTime(intakeForwardSec,  1.0);
         }
         return new SequentialAction(steps);
     }
@@ -256,7 +321,154 @@ public class HelperUtils {
                 return true; // keep aligning
             }
         };
+
     }
+
+
+    public Action alignToTagTxAndDistanceCm(MecanumDrive drive,
+                                            double targetDistanceCm,
+                                            double timeoutSec) {
+        return new Action() {
+            private boolean started = false;
+            private long startMs;
+
+            @Override
+            public boolean run(@NonNull TelemetryPacket packet) {
+                if (!started) {
+                    started = true;
+                    startMs = System.currentTimeMillis();
+                }
+
+                // Update Limelight yaw (deg)
+                Pose2d rrPose = drive.localizer.getPose();
+                double yawDeg = Math.toDegrees(rrPose.heading.toDouble());
+                limelight.updateRobotOrientation(yawDeg);
+
+                TagMeas tag = getBestTagMeasurement();
+
+                double fwdCmd = 0.0;
+                double omegaAssist = 0.0;
+
+                if (tag.valid) {
+                    // Distance: +err => too far
+                    double distErr = tag.distanceCm - targetDistanceCm;
+
+                    if (Math.abs(distErr) > aa_DIST_DEADBAND_CM) {
+                        fwdCmd = clamp(
+                                aa_CAMERA_FORWARD_SIGN * aa_kP_DIST * distErr,
+                                -aa_MAX_FWD_POWER, aa_MAX_FWD_POWER
+                        );
+                    }
+
+                    // Turn: tx>0 => tag right => turn CW (negative omega)
+                    if (Math.abs(tag.txDeg) > aa_TX_DEADBAND_DEG) {
+                        omegaAssist = clamp(
+                                -aa_kP_TURN * tag.txDeg,
+                                -aa_MAX_TURN_POWER, aa_MAX_TURN_POWER
+                        );
+                    } else {
+                        omegaAssist = 0.0;
+                    }
+                } else {
+                    // Search: rotate only
+                    omegaAssist = ll_searchOmega;  // keep this small (0.2–0.5 recommended)
+                    fwdCmd = 0.0;
+                }
+
+                // Cache for telemetry
+                ll_lastValid = tag.valid;
+                ll_lastTxDeg = tag.valid ? tag.txDeg : Double.NaN;
+                ll_lastOmegaAssist = omegaAssist;
+                ll_lastVisionUpdateMs = System.currentTimeMillis();
+
+                packet.put("LL_Valid", tag.valid);
+                packet.put("LL_tx_deg", tag.valid ? tag.txDeg : Double.NaN);
+                packet.put("LL_dist_cm", tag.valid ? tag.distanceCm : Double.NaN);
+                packet.put("LL_target_cm", targetDistanceCm);
+                packet.put("LL_fwdCmd", fwdCmd);
+                packet.put("LL_omegaAssist", omegaAssist);
+
+                telemetry.addData("LL_Valid", tag.valid);
+                telemetry.addData("LL_tx_deg", tag.valid ? tag.txDeg : Double.NaN);
+                telemetry.addData("LL_dist_cm", tag.valid ? tag.distanceCm : Double.NaN);
+                telemetry.addData("LL_target_cm", targetDistanceCm);
+                telemetry.addData("LL_fwdCmd", fwdCmd);
+                telemetry.addData("LL_omegaAssist", omegaAssist);
+
+                // Apply using your blending model:
+                drive.setVisionOmega(omegaAssist);
+                drive.setDrivePowers(new PoseVelocity2d(new Vector2d(fwdCmd, 0.0), 0.0));
+
+                boolean angleLocked = tag.valid && (Math.abs(tag.txDeg) <= aa_TX_DEADBAND_DEG);
+                boolean distLocked  = tag.valid && (Math.abs(tag.distanceCm - targetDistanceCm) <= aa_DIST_DEADBAND_CM);
+                boolean timedOut = (System.currentTimeMillis() - startMs) > (long)(timeoutSec * 1000.0);
+
+                if ((angleLocked && distLocked) || timedOut) {
+                    drive.setVisionOmega(0.0);
+                    drive.setDrivePowers(new PoseVelocity2d(new Vector2d(0.0, 0.0), 0.0));
+                    ll_lastOmegaAssist = 0.0;
+                    return false;
+                }
+
+                return true;
+            }
+        };
+    }
+
+
+    private static double clamp(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    private static class TagMeas {
+        boolean valid;
+        int id;
+        double distanceCm; // lens -> tag
+        double txDeg;      // horizontal offset
+    }
+
+    private TagMeas getBestTagMeasurement() {
+        TagMeas out = new TagMeas();
+        out.valid = false;
+
+        if (limelight == null) return out;
+
+        LLResult result = limelight.getLatestResult();
+        if (result == null || !result.isValid()) return out;
+
+        List<LLResultTypes.FiducialResult> fiducials = result.getFiducialResults();
+        if (fiducials == null || fiducials.isEmpty()) return out;
+
+        // Choose the closest tag by 3D camera-space distance
+        LLResultTypes.FiducialResult best = null;
+        double bestDistM = Double.POSITIVE_INFINITY;
+
+        for (LLResultTypes.FiducialResult f : fiducials) {
+            Pose3D poseCam = f.getTargetPoseCameraSpace(); // target pose relative to CAMERA (lens origin)
+            if (poseCam == null) continue;
+
+            Position p = poseCam.getPosition();
+            double xM = DistanceUnit.METER.fromUnit(p.unit, p.x);
+            double yM = DistanceUnit.METER.fromUnit(p.unit, p.y);
+            double zM = DistanceUnit.METER.fromUnit(p.unit, p.z);
+
+            double distM = Math.sqrt(xM * xM + yM * yM + zM * zM);
+            if (distM < bestDistM) {
+                bestDistM = distM;
+                best = f;
+            }
+        }
+
+        if (best == null) return out;
+
+        out.valid = true;
+        out.id = best.getFiducialId();
+        out.distanceCm = bestDistM * 100.0;
+        out.txDeg = best.getTargetXDegrees();
+        return out;
+    }
+
+
 
 
     public Action withPoseTelemetry(Action inner, MecanumDrive drive, Shooter shooter, boolean trapdoorOpen) {
@@ -273,10 +485,19 @@ public class HelperUtils {
                 packet.put("X", pose.position.x);
                 packet.put("Y", pose.position.y);
                 packet.put("HeadingDeg", headingDeg);
+                packet.put("Run Time", runtime.toString());
+                packet.put("Target RPM", shooter.getBangBangTargetVelocity());
+                packet.put("Actual RPM", shooter.getActualRPM());
+                packet.put("Trapdoor:", trapdoorOpen? "OPEN" : "CLOSED");
 
                 telemetry.addData("X", pose.position.x);
                 telemetry.addData("Y", pose.position.y);
                 telemetry.addData("Heading (deg)", headingDeg);
+                telemetry.addData("Run Time", runtime.toString());
+                telemetry.addData("Target RPM", shooter.getBangBangTargetVelocity());
+                telemetry.addData("Actual RPM", shooter.getActualRPM());
+                telemetry.addData("Trapdoor:", trapdoorOpen? "OPEN" : "CLOSED");
+
 
                 // ---- Minimal Limelight telemetry ----
                 if (limelight != null) {
